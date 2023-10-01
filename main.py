@@ -1,9 +1,6 @@
-# TODO: Комментарии к конфигу??
-# TODO: Все для шаблона (ссылки, тексты, картинки) вынести в конфиг ?
-# TODO: roleid по умолчанию 5 (студент) - вынести в конфиг
-import secrets
-import string
-import random
+# TODO: Все для шаблона (ссылки, тексты, картинки) вынести в конфиг
+import os.path
+from shutil import copy2
 from time import sleep
 import gspread
 from email_validator import validate_email, EmailNotValidError
@@ -11,10 +8,15 @@ import config
 from email_utils import mailto
 from log_config import logger
 from config import set_option, get_option, check_env
-from moodle_utils import call, create_user, create_course, get_user_by_field, enroll_user_to_course, get_course_by_field
+from moodle_utils import create_user, create_course, get_user_by_field, enroll_user_to_course, get_course_by_field
+from registration_utils import generate_unique_login, generate_password, validate_name
 
 
 def get_spreadsheet():
+    """
+    Get data from Google Sheets
+    :return: Data from Google Sheets as list of lists
+    """
     sa = gspread.service_account(
         filename=get_option('google_sheets', 'credentials_path'))
     sh = sa.open(get_option('google_sheets', 'spreadsheet_name'))
@@ -29,6 +31,14 @@ def get_spreadsheet():
 
 
 def setup():
+    """
+    Function for setting up the script, if something is not configured yet
+    """
+    # If the config file doesn't exist - copy default_config.ini to config.ini
+    if not os.path.exists('config.ini'):
+        logger.info('Config file not found. Copying default_config.ini to config.ini')
+        copy2('default_config.ini', 'config.ini')
+
     if not get_option('moodle', 'url'):
         set_option('moodle', 'url', input("Please enter the Moodle instance URL: "))
 
@@ -40,7 +50,9 @@ def setup():
     check_env()
 
     if not get_option('moodle', 'student_role_id'):
-        set_option('moodle', 'student_role_id', input("Please enter the Moodle student role id: "))
+        set_option('moodle', 'student_role_id', input(
+            f"Please enter the ID of the role that will be assigned to students (press Enter for default: "
+            f"{get_option('moodle', 'default_student_role_id')}): ") or get_option('moodle', 'default_student_role_id'))
 
     if not get_option('moodle', 'force_password_change'):
         if input("Do you want to force password change on first login? (y=yes): ") == "y":
@@ -122,74 +134,39 @@ def setup():
 setup()
 
 
-def generate_password():
-    length = 9  # Length of the password
-
-    lowercase = secrets.choice(string.ascii_lowercase)
-    uppercase = secrets.choice(string.ascii_uppercase)
-    digit = secrets.choice(string.digits)
-    punctuation = secrets.choice(string.punctuation)
-
-    remaining_length = length - 4
-    remaining_characters = ''.join(
-        secrets.choice(string.ascii_letters + string.digits + string.punctuation) for i in range(remaining_length))
-    # List of generated characters
-    password_characters = list(lowercase + uppercase + digit + punctuation + remaining_characters)
-    # Shuffle all characters
-    random.shuffle(password_characters)
-    # Convert the list to string
-    password = ''.join(password_characters)
-
-    return password
-
-
-def validate_name(name):
-    if (name.replace(' ', '').replace('\n', '')).isalpha() and len(name.split()) > 1:
-        return name.title()
-    logger.error('Error: name is not correct (only letters and more than 1 word)!')
-    return None
-
-
-def generate_unique_login(name):
-    original_login = name.split(' ')[1][0].lower() + '_' + name.split(' ')[0].lower()
-    max_attempts = int(get_option('config', 'max_login_generation_attempts'))
-    for attempt in range(max_attempts):
-        response = call('core_user_get_users_by_field', field='username', values=[original_login])
-        # Если такого пользователя нет, возвращаем этот логин
-        if not response:
-            return original_login
-        # Иначе увеличиваем номер в логине
-        original_login = original_login + str(attempt + 1)
-    logger.error('Failed to generate a unique login after %s attempts.', max_attempts)
-    return None
-
-
-def newUser(name, course_name, email):
-    # 1. Проверка существующего пользователя
+def student_registration(name, course_name, email):
+    """
+    Creates a new user in Moodle, enrolls him in the course and sends an email with login and password
+    :param name: Full name of the user
+    :param course_name: Name of the course
+    :param email: User's email
+    :return: User's login
+    """
+    # 1. Check if user already exists
     existing_user = get_user_by_field('email', email)
     if existing_user:
         userid = existing_user['id']
         login = existing_user['username']
         password = None
     else:
-        # 2. Валидация имени
+        # 2. Name validation
         name = validate_name(name)
         if not name:
             return ['error', '', 'ERROR - Name is not valid!']
 
-        # 3. Валидация email
+        # 3. Email validation
         try:
             validate_email(email)
         except EmailNotValidError as e:
             logger.error('Incorrect email - %s: %s', email, e)
             return ['error', '', 'ERROR - Invalid email!']
 
-        # 4. Генерация логина
+        # 4. Login generation
         login = generate_unique_login(name)
         if not login:
             return ['error', '', 'ERROR - Failed to generate unique login']
 
-        # 5. Создание нового пользователя
+        # 5. Create user
         firstname, lastname = name.split()[1], name.split()[0]
         password = generate_password()
         try:
@@ -198,11 +175,12 @@ def newUser(name, course_name, email):
             logger.error('Error while creating user with email %s: %s', email, e)
             return ['error', '', 'ERROR - User registration failed!']
 
-    # 6. Проверка курса
+    # 6. Course creation
     if len(course_name) > 100:
         logger.error('Course name is too long: %s', course_name)
         return ['error', '', 'ERROR - Course name is too long!']
 
+    # 6.1. Check if course already exists
     course = get_course_by_field('shortname', course_name)
     if course:
         courseid = course['id']
@@ -214,11 +192,11 @@ def newUser(name, course_name, email):
             logger.error('Error while creating course %s: %s', course_name, e)
             return ['error', '', 'ERROR - Course creation failed!']
 
-    # 7. Запись пользователя на курс
+    # 7. Enroll user to course
     if not enroll_user_to_course(userid, courseid):
         return ['error', '', 'ERROR - Failed to enroll user to course']
 
-    # 8. Отправка email пользователю
+    # 8. Send email-notification to user
     try:
         mailto(course=course_name, name=name, login=login, password=password, email=email)
     except Exception as e:
@@ -228,6 +206,9 @@ def newUser(name, course_name, email):
 
 
 def check_new():
+    """
+    Checks the spreadsheet for new records for registration and registers them
+    """
     sa = gspread.service_account(
         filename=get_option('google_sheets', 'credentials_path'))
     sh = sa.open(get_option('google_sheets', 'spreadsheet_name'))
@@ -235,12 +216,12 @@ def check_new():
     sheets_data = get_spreadsheet()
 
     for ws, ws_local in sheets_data:
-        wks = sh.worksheet(ws)  # Получаем объект листа для текущего имени
+        wks = sh.worksheet(ws)  # Open the sheet
 
-        if not ws_local:  # Если нет данных в листе
+        if not ws_local:  # Skip empty sheets
             continue
 
-        headers = ws_local[0]  # Первая строка - заголовки
+        headers = ws_local[0]  # First row is headers
         if config.col_name_login not in headers:
             logger.error("Login column not found in sheet %s", ws)
             continue
@@ -248,16 +229,17 @@ def check_new():
         col_index_login = headers.index(config.col_name_login)
         col_index_confirm = headers.index(config.col_confirm)
 
-        for i, row in enumerate(ws_local[1:], start=2):  # Начнем с 2, так как первая строка - заголовки
+        for i, row in enumerate(ws_local[1:], start=2):  # We start from the second row because the first is headers
             if row[col_index_confirm] == "TRUE" and \
                     (not row[col_index_login] or 'ERROR' in row[col_index_login]):
                 if all([row[headers.index(config.col_name_fio)],
                         row[headers.index(config.col_name_course)],
                         row[headers.index(config.col_name_mail)]]):
                     try:
-                        wks.update_cell(i, col_index_login + 1, newUser(row[headers.index(config.col_name_fio)],
-                                                                        row[headers.index(config.col_name_course)],
-                                                                        row[headers.index(config.col_name_mail)]))
+                        wks.update_cell(i, col_index_login + 1,
+                                        student_registration(row[headers.index(config.col_name_fio)],
+                                                             row[headers.index(config.col_name_course)],
+                                                             row[headers.index(config.col_name_mail)]))
                     except Exception as e:
                         if "429" in str(e):
                             logger.error("Google API - Too many requests. Pause for 20 seconds.")

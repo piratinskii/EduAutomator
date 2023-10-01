@@ -8,6 +8,11 @@ config.read('config.ini', encoding='utf-8')
 
 
 def set_env_variable(key, value):
+    """
+    Set environment variable for current user. Using for storing Moodle API key
+    :param key: Key of variable
+    :param value: Value of variable
+    """
     system_platform = platform.system()
 
     if system_platform == "Windows":
@@ -21,6 +26,10 @@ def set_env_variable(key, value):
 
 
 def check_env():
+    """
+    Check if Moodle API key is set. If not - ask user to enter it
+    :return: Moodle API key
+    """
     # Check if Moodle API key is set
     moodle_api_key = os.environ.get('EDU_AUTOMATOR_MOODLE_API_KEY')
     # If key didn't set, ask user to enter it
@@ -32,16 +41,28 @@ def check_env():
 
 
 def set_option(section, option, new_value):
+    """
+    Set new value to option in config.ini
+    :param section: Section of config.ini (moodle, columns etc.)
+    :param option: Option of section (url, endpoint etc.)
+    :param new_value: New value of option
+    """
     config[section][option] = new_value
     with open('config.ini', 'w', encoding='utf-8') as configfile:
         config.write(configfile)
 
 
 def get_option(section, option):
+    """
+    Get option's value from config.ini
+    :param section: Section of config.ini (moodle, columns etc.)
+    :param option: Name of option (url, endpoint etc.)
+    :return: Value of option
+    """
     return config[section][option]
 
 
-# Настройки программы
+# General configuration
 # Moodle API Configuration
 KEY = check_env()
 URL = config['moodle']['url']

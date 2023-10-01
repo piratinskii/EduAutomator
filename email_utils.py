@@ -16,10 +16,16 @@ from log_config import logger
 import base64
 import config
 
-context = ssl.create_default_context()
-
 
 def auth_gmail():
+    """
+    Authorize in Gmail API
+    If token already exists - use it (path to token is in config.ini)
+    Otherwise - get new token. This function displays QR code and URL for authorization
+    instead of default browser authorization because we use this application on the server
+    without GUI
+    :return: service for working with Gmail API
+    """
     # If we already have token - use it
     creds = None
     if os.path.exists('token.json'):
@@ -59,6 +65,12 @@ def auth_gmail():
 
 
 def mailto(**kwargs):
+    """
+    Send email to user or admin depending on kwargs
+    If you provide login - send email to user (registration if password provided, enrollment if not).
+    If you don't provide login - send email to admin (no course)
+    :param kwargs: Some variables for template (login, email, password, course_name etc.)
+    """
     try:
         if kwargs.get('login'):  # Letters for users
             msg_to = kwargs.get('email')
@@ -98,6 +110,13 @@ def mailto(**kwargs):
 
 
 def create_message(to, subject, message_text):
+    """
+    Create message for sending
+    :param to: To whom we send message
+    :param subject: Subject of message
+    :param message_text: Text of message
+    :return: Raw message for sending
+    """
     message = MIMEMultipart('alternative')
     message['to'] = to
     message['subject'] = subject
@@ -110,6 +129,14 @@ def create_message(to, subject, message_text):
 @retry(stop_max_attempt_number=3, wait_fixed=5000,
        retry_on_exception=lambda exception: isinstance(exception, HttpError))
 def send_message(gmail_service, user_id, message):
+    """
+    Send message. This function is decorated with retry decorator, so if something went wrong while sending message,
+    it will retry 3 times with 5 seconds delay before raising exception
+    :param gmail_service: Gmail service (from auth_gmail function)
+    :param user_id: ID of sender (usually it's "me" - sender name from Gmail API)
+    :param message: RAW message for sending (from create_message function)
+    :return: Message object
+    """
     try:
         message = gmail_service.users().messages().send(userId=user_id, body=message).execute()
         return message

@@ -5,6 +5,13 @@ from log_config import logger
 
 # Function for transforming parameters to Moodle API format
 def rest_api_parameters(in_args, prefix='', out_dict=None):
+    """
+    Transform parameters to Moodle API format
+    :param in_args: Parameters to transform
+    :param prefix: Prefix for the parameter (use in recursion, not required)
+    :param out_dict: Output dictionary (use in recursion, not required)
+    :return: Output dictionary with transformed parameters
+    """
     if out_dict is None:
         out_dict = {}
     if not type(in_args) in (list, dict):
@@ -25,6 +32,13 @@ def rest_api_parameters(in_args, prefix='', out_dict=None):
 
 # Function for calling Moodle API
 def call(fname, **kwargs):
+    """
+    Call Moodle API
+    You have to enable functions in Moodle API settings to call them
+    :param fname: Name of the function to call
+    :param kwargs: Function parameters as keyword arguments
+    :return: response from Moodle API
+    """
     response = None
     try:
         parameters = rest_api_parameters(kwargs)
@@ -39,6 +53,11 @@ def call(fname, **kwargs):
 
 
 def create_course(name):
+    """
+    Create new course in Moodle
+    :param name: Name of the course (will be used as fullname and shortname)
+    :return: Course ID if course was created, None otherwise
+    """
     course_data = {
         'fullname': name,
         'shortname': name,
@@ -52,6 +71,15 @@ def create_course(name):
 
 
 def create_user(firstname, lastname, email, username, password):
+    """
+    Create new user in Moodle
+    :param firstname: First name of the user
+    :param lastname: Last name of the user
+    :param email: User's email
+    :param username: User's login
+    :param password: User's password
+    :return: User ID if user was created, None otherwise
+    """
     user_data = {
         'username': username,
         'firstname': firstname,
@@ -69,6 +97,12 @@ def create_user(firstname, lastname, email, username, password):
 
 
 def enroll_user_to_course(userid, courseid):
+    """
+    Enroll user to the course
+    :param userid: ID of the user to enroll
+    :param courseid: ID of the course to enroll to
+    :return: True if user was enrolled, False otherwise
+    """
     try:
         call('enrol_manual_enrol_users', enrolments=[{'roleid': config.roleid, 'userid': userid, 'courseid': courseid}])
         user = get_user_by_field('id', userid)
@@ -81,6 +115,12 @@ def enroll_user_to_course(userid, courseid):
 
 
 def get_user_by_field(field, value):
+    """
+    Returns user by field
+    :param field: Name of the field (id, username, email)
+    :param value: Search value
+    :return: User object if found, None otherwise
+    """
     user = call('core_user_get_users_by_field', field=field, values=[value])
     if user and len(user) > 0:
         return user[0]
@@ -88,6 +128,12 @@ def get_user_by_field(field, value):
 
 
 def get_course_by_field(field, value):
+    """
+    Returns course by field
+    :param field: Name of the field (id, shortname, fullname)
+    :param value: Search value
+    :return: Course object if found, None otherwise
+    """
     course = call('core_course_get_courses_by_field', field=field, value=value)['courses']
     if course and len(course) > 0:
         return course[0]

@@ -4,8 +4,11 @@ import time
 from logging.handlers import TimedRotatingFileHandler
 
 
-# I want use "YYYY-MM-DD" format for log-file names. Then I need to create custom handler for logging
 class CustomTimedRotatingFileHandler(TimedRotatingFileHandler):
+    """
+    Custom handler for logging. It creates new log file every midnight and keep 7 last log files
+    (you can change this in backupCount parameter). Log file name format is "YYYY-MM-DD.log"
+    """
     def __init__(self, dir_name, backupCount=0, encoding=None, delay=False, utc=False, atTime=None):
         # Set log file name to current date
         filename = os.path.join(dir_name, time.strftime("%Y-%m-%d") + ".log")
