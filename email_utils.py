@@ -5,15 +5,13 @@ from collections import defaultdict
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from time import sleep
-
-import qrcode as qrcode
+import qrcode
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
 from googleapiclient.errors import HttpError
 from retrying import retry
-
 from log_config import logger
 import base64
 import config
@@ -91,6 +89,7 @@ def mailto(**kwargs):
         email_content = letter.format_map(defaultdict(str, **combined_vars))
         message = create_message(msg_to, msg_subject, email_content)
         send_message(service, 'me', message)
+        logger.info('Message sent to %s', msg_to)
     except Exception as e:  # If something went wrong-wrong - restart program
         logger.error('Error while sending mail: %s. Trying again', e)
         logger.info('Restarting program...')

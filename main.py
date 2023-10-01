@@ -11,28 +11,21 @@ import config
 from email_utils import mailto
 from log_config import logger
 from config import set_option, get_option, check_env
-from moodle_utils import call, create_user, Course
-
-# TODO: Надо ли это тут? И надо ли это вообще?
-sheets = []
+from moodle_utils import call, create_user, create_course, get_user_by_field, enroll_user_to_course, get_course_by_field
 
 
-# TODO: Надо ли это тут? И надо ли это вообще?
 def get_spreadsheet():
     sa = gspread.service_account(
         filename=get_option('google_sheets', 'credentials_path'))
-    sh = sa.open(
-        get_option('google_sheets','spreadsheet_name'))
-    return sh
+    sh = sa.open(get_option('google_sheets', 'spreadsheet_name'))
 
+    sheets_data = []
+    for worksheet in sh.worksheets():
+        title = worksheet.title
+        data = worksheet.get_all_values()
+        sheets_data.append([title, data])
 
-# Load list of sheets from spreadsheet
-def updateSheets():
-    sh = get_spreadsheet()
-    global sheets
-    sheets = []
-    for i in sh.worksheets():
-        sheets.append(i.title)
+    return sheets_data
 
 
 def setup():
@@ -85,22 +78,21 @@ def setup():
     if not get_option('email', 'no_course_subject'):
         set_option('email', 'no_course_subject', input(
             f"Please enter the subject for administrator's emails (if there is new course) (press Enter for default: "
-            f"{get_option('email', 'default_no_course_subject')}): ") or get_option('email', 'default_no_course_subject'))
+            f"{get_option('email', 'default_no_course_subject')}): ") or get_option('email',
+                                                                                    'default_no_course_subject'))
 
     # Columns configuration - if any of the columns is empty, ask user to configure columns
     keys_to_check = ['fullname', 'course_name', 'email', 'confirm', 'login']
 
     if any(not get_option('columns', key) for key in keys_to_check):
         print("Let's configure columns in the Google spreadsheet. Please, wait...")
-        updateSheets()
         flag = True
         i = 0  # Index of the sheet
         columns_list = None
-        sh = get_spreadsheet()
+        sheets_data = get_spreadsheet()
         while flag:
-            wks = sh.worksheet(sheets[i])  # Open the first sheet
-            ws_local = wks.get_all_records()  # Get all records from the sheet
-            columns_list = list(ws_local[0])  # Get the list of headers
+            ws_local = sheets_data[i][1]  # Get all records from the sheet
+            columns_list = ws_local[0] if ws_local else []  # Get the list of headers
             print(f"Below is a list of all columns for sheet {i}.\nPlease note that for the program to function "
                   f"correctly, the sheet must contain the following columns: \n* Student's full name\n* Course name\n"
                   f"* Student's email\n* Confirmation checkbox for portal registration\n* Field for displaying "
@@ -122,12 +114,13 @@ def setup():
         set_option('columns', 'fullname', columns_list[int(input(f"Student's full name: ")) - 1])
         set_option('columns', 'course_name', columns_list[int(input(f"Course name: ")) - 1])
         set_option('columns', 'email', columns_list[int(input(f"Student's email: ")) - 1])
-        set_option('columns', 'confirm', columns_list[int(input(f"Confirmation checkbox for portal registration: ")) - 1])
+        set_option('columns', 'confirm',
+                   columns_list[int(input(f"Confirmation checkbox for portal registration: ")) - 1])
         set_option('columns', 'login', columns_list[int(input(f"Field for displaying the login or errors: ")) - 1])
 
 
 setup()
-#
+
 
 def generate_password():
     length = 9  # Length of the password
@@ -150,157 +143,140 @@ def generate_password():
     return password
 
 
+def validate_name(name):
+    if (name.replace(' ', '').replace('\n', '')).isalpha() and len(name.split()) > 1:
+        return name.title()
+    logger.error('Error: name is not correct (only letters and more than 1 word)!')
+    return None
+
+
+def generate_unique_login(name):
+    original_login = name.split(' ')[1][0].lower() + '_' + name.split(' ')[0].lower()
+    max_attempts = int(get_option('config', 'max_login_generation_attempts'))
+    for attempt in range(max_attempts):
+        response = call('core_user_get_users_by_field', field='username', values=[original_login])
+        # Если такого пользователя нет, возвращаем этот логин
+        if not response:
+            return original_login
+        # Иначе увеличиваем номер в логине
+        original_login = original_login + str(attempt + 1)
+    logger.error('Failed to generate a unique login after %s attempts.', max_attempts)
+    return None
+
+
 def newUser(name, course_name, email):
-    # Check if user with this email already exists
-    existing_user = call('core_user_get_users_by_field', field='email', values=[email])
-    if existing_user and len(existing_user) > 0:
-        userid = existing_user[0]['id']
-        login = existing_user[0]['username']
+    # 1. Проверка существующего пользователя
+    existing_user = get_user_by_field('email', email)
+    if existing_user:
+        userid = existing_user['id']
+        login = existing_user['username']
         password = None
     else:
-        # If user doesn't exist - create new user
-        # Check if name is correct
-        if (name.replace(' ', '').replace('\n', '')).isalpha() and len(
-                name.split()) > 1:  # Check if name contains only letters and has more than 1 word (name and surname)
-            name = name.title()  # Make name and surname title
-        else:
-            logger.error('Error while creating user with email %s: name is not correct (only letters and more than 1 '
-                         'word)!', email)
-            return ['error', '', 'ERROR - name is not correct (only letters and more than 1 word)!']
+        # 2. Валидация имени
+        name = validate_name(name)
+        if not name:
+            return ['error', '', 'ERROR - Name is not valid!']
 
-        # Check if email is correct
+        # 3. Валидация email
         try:
             validate_email(email)
         except EmailNotValidError as e:
             logger.error('Incorrect email - %s: %s', email, e)
-            return ['error', '', 'ERROR - incorrect email!']
+            return ['error', '', 'ERROR - Invalid email!']
 
-        # Login generation
-        """
-        In our case we have format of login: first letter of name + '_' + lastname + number (if login is not unique)
-        For Example: John Smith - j_smith, j_smith1, j_smith2, etc.
-        """
-        original_login = name.split(' ')[1][0].lower() + '_' + name.split(' ')[0].lower()
-        max_attempts = int(get_option('config', 'max_login_generation_attempts'))
-        login = original_login
-        # Try to generate unique login max_attempts times. Every time we increase number in login
-        for attempt in range(max_attempts):
-            response = call('core_user_get_users_by_field', field='username', values=[login])
+        # 4. Генерация логина
+        login = generate_unique_login(name)
+        if not login:
+            return ['error', '', 'ERROR - Failed to generate unique login']
 
-            # If user with such login is not found, we can use this login
-            if not response:
-                break
-
-            # If user with such login is found, we need to generate another one
-            login = original_login+str(attempt + 1)
-        else:
-            logger.error('Failed to generate a unique login after %s attempts.', max_attempts)
-
-        # Create new user
-        firstname = name.split()[1]
-        lastname = name.split()[0]
+        # 5. Создание нового пользователя
+        firstname, lastname = name.split()[1], name.split()[0]
         password = generate_password()
-        # Register user
         try:
-            userid = create_user(firstname=firstname, lastname=lastname, email=email, username=login, password=password)
+            userid = create_user(firstname, lastname, email, login, password)
         except Exception as e:
             logger.error('Error while creating user with email %s: %s', email, e)
-            return ['error', '', 'ERROR - there is problem while user registration']
+            return ['error', '', 'ERROR - User registration failed!']
 
-    # Check course name
+    # 6. Проверка курса
     if len(course_name) > 100:
         logger.error('Course name is too long: %s', course_name)
-        return ['error', '',
-                'THE COURSE NAME IS TOO LONG.']
+        return ['error', '', 'ERROR - Course name is too long!']
 
-    # Check if course exists
-    course = call('core_course_get_courses_by_field', field='shortname', value=course_name)['courses']
-    if course and len(course) > 0:
-        courseid = course[0]['id']
+    course = get_course_by_field('shortname', course_name)
+    if course:
+        courseid = course['id']
     else:
-        # If course doesn't exist - create new course
         try:
-            new_course = Course(fullname=course_name, shortname=course_name,
-                                categoryid=config.category_id)
-            new_course.create()
-            logger.info('New course created: %s', course_name)
-            courseid = call('core_course_get_courses_by_field', field='shortname', value=course_name)['courses'][0]['id']
-            try:
-                mailto(course=course_name)  # Send email to administrator about new course
-            except Exception as e:
-                logger.error('Error while sending email to administrator about new course: %s', e)
+            courseid = create_course(course_name)
+            mailto(course=course_name)  # Send email to admin about new course
         except Exception as e:
             logger.error('Error while creating course %s: %s', course_name, e)
-            return ['error', '', 'ERROR - there is problem while creating course']
+            return ['error', '', 'ERROR - Course creation failed!']
 
-    # Enrol user to the course
-    try:
-        # Enrol user to the course
-        call('enrol_manual_enrol_users',
-             enrolments=[{'roleid': config.roleid, 'userid': userid, 'courseid': courseid}])
-    except Exception as e:
-        logger.error('Error while enrolling user %s to the course: %s', login, e)
-    logger.info('New user registered: %s with login %s and enrolled to the course %s', name, login, course_name)
+    # 7. Запись пользователя на курс
+    if not enroll_user_to_course(userid, courseid):
+        return ['error', '', 'ERROR - Failed to enroll user to course']
 
+    # 8. Отправка email пользователю
     try:
-        # Send email to user
         mailto(course=course_name, name=name, login=login, password=password, email=email)
     except Exception as e:
         logger.error('Error while sending email to user: %s', e)
+
     return login
 
 
-# Main function - check if we have new users in the table
 def check_new():
-    ws_local = None
-    sh = get_spreadsheet()
-    # Check all sheets in the spreadsheet
-    for ws in sheets:
-        wks = sh.worksheet(ws)
-        try:
-            # Copy all data from the sheet to the local variable (less requests to Google Sheets API)
-            ws_local = wks.get_all_records(
-                expected_headers=[config.col_name_fio, config.col_name_course, config.col_name_login, config.col_name_mail,
-                                  config.col_confirm])
-        except Exception as e:
-            logger.error("Error while getting data from the sheet %s: %s", ws, e)
+    sa = gspread.service_account(
+        filename=get_option('google_sheets', 'credentials_path'))
+    sh = sa.open(get_option('google_sheets', 'spreadsheet_name'))
 
-        if ws_local:  # If we have data in the sheet
-            try:
-                headers = wks.row_values(1)
-                # Get column index of the login column
-                col_index = headers.index(config.col_name_login) + 1
-                for i in range(0, len(ws_local)):  # Check all rows
-                    if ws_local[i][config.col_confirm] == "TRUE" \
-                            and (ws_local[i][config.col_name_login] == "" or 'ERROR' in ws_local[i][config.col_name_login]):
-                        # If user is confirmed to enrollment and not created or was error - create new user
-                        if all([ws_local[i][config.col_name_fio], ws_local[i][config.col_name_course],
-                                ws_local[i][config.col_name_mail]]):
-                            # If we have all required data - create new user
-                            wks.update_cell(i + 2, col_index,
-                                            newUser(ws_local[i][config.col_name_fio], ws_local[i][config.col_name_course],
-                                                    ws_local[i][config.col_name_mail]))
+    sheets_data = get_spreadsheet()
+
+    for ws, ws_local in sheets_data:
+        wks = sh.worksheet(ws)  # Получаем объект листа для текущего имени
+
+        if not ws_local:  # Если нет данных в листе
+            continue
+
+        headers = ws_local[0]  # Первая строка - заголовки
+        if config.col_name_login not in headers:
+            logger.error("Login column not found in sheet %s", ws)
+            continue
+
+        col_index_login = headers.index(config.col_name_login)
+        col_index_confirm = headers.index(config.col_confirm)
+
+        for i, row in enumerate(ws_local[1:], start=2):  # Начнем с 2, так как первая строка - заголовки
+            if row[col_index_confirm] == "TRUE" and \
+                    (not row[col_index_login] or 'ERROR' in row[col_index_login]):
+                if all([row[headers.index(config.col_name_fio)],
+                        row[headers.index(config.col_name_course)],
+                        row[headers.index(config.col_name_mail)]]):
+                    try:
+                        wks.update_cell(i, col_index_login + 1, newUser(row[headers.index(config.col_name_fio)],
+                                                                        row[headers.index(config.col_name_course)],
+                                                                        row[headers.index(config.col_name_mail)]))
+                    except Exception as e:
+                        if "429" in str(e):
+                            logger.error("Google API - Too many requests. Pause for 20 seconds.")
+                            sleep(20)
+                        elif "502" in str(e):
+                            logger.error("Google API - Something went wrong (Bad Gateway). Pause for 30 seconds.")
+                            sleep(30)
                         else:
-                            logger.error("Not all required data has been filled in for row %d in sheet %s", i, ws)
-                            wks.update_cell(i + 2, col_index, 'ERROR: Not all required data has been filled in')
-            except Exception as e:
-                if str(e).find("429") != -1:
-                    logger.error("Google API - Too many requests. Pause for 20 seconds.")
-                    sleep(20)
-                elif str(e).find("502") != -1:
-                    logger.error("Google API - Something went wrong (Bad Gateway). Pause for 30 seconds.")
-                    sleep(30)
+                            logger.error('Error while working with Google Sheets: %s', e)
+                            sleep(20)
                 else:
-                    logger.error('Error while working with Google Sheets (list %s): %s', wks, e)
-                    sleep(20)
+                    logger.error("Not all required data has been filled in for row %d in sheet %s", i, ws)
+                    wks.update_cell(i, col_index_login + 1, 'ERROR: Not all required data has been filled in')
 
 
 if __name__ == "__main__":
     logger.info('Program started successfully!')
 
-
     while True:
-        updateSheets()
         check_new()
         # Pause for 20 seconds to avoid too many requests to Google Sheets API
         sleep(20)

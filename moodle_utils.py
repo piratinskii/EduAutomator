@@ -38,51 +38,57 @@ def call(fname, **kwargs):
     return response
 
 
-# TODO: Может лучше избавиться от классов?
-class Course:
-    def __init__(self, **data):
-        self.__dict__.update(data)
-
-    def create(self):
-        try:
-            res = call('core_course_create_courses', courses=[self.__dict__])
-            if isinstance(res, list) and len(res) > 0:
-                self.id = res[0].get('id')
-        except Exception as e:
-            logger.error('Error while creating course: %s', e)
-
-
-def create_user(**kwargs):
-    valid_keys = ['username',
-                  'firstname',
-                  'lastname',
-                  'email',
-                  'password']
-    values = {key: kwargs[key] for key in valid_keys}
-    values['auth'] = "manual"
-    values['idnumber'] = "fromapi"
-    preferences = [{'type': 'auth_forcepasswordchange', 'value': config.force_password}]
-    values['preferences'] = preferences
-
-    res = call('core_user_create_users', users=[values])
+def create_course(name):
+    course_data = {
+        'fullname': name,
+        'shortname': name,
+        'categoryid': config.get_option('moodle', 'category_id'),
+    }
+    res = call('core_course_create_courses', courses=[course_data])
     if isinstance(res, list) and len(res) > 0:
+        logger.info('Course %s created', name)
         return res[0].get('id')
     return None
 
 
-# class User:
-#     def __init__(self, **data):
-#         self.__dict__.update(data)
-#
-#     def create(self):
-#         valid_keys = ['username',
-#                       'firstname',
-#                       'lastname',
-#                       'email',
-#                       'auth',
-#                       'idnumber',
-#                       'password']
-#         values = {key: self.__dict__[key] for key in valid_keys}
-#
-#         if type(res) == list:
-#             self.id = res[0].get('id')
+def create_user(firstname, lastname, email, username, password):
+    user_data = {
+        'username': username,
+        'firstname': firstname,
+        'lastname': lastname,
+        'email': email,
+        'password': password,
+        'auth': 'manual',
+        'preferences': [{'type': 'auth_forcepasswordchange', 'value': config.force_password}]
+    }
+    res = call('core_user_create_users', users=[user_data])
+    if isinstance(res, list) and len(res) > 0:
+        logger.info('User %s (%s) created', lastname + " " + firstname, username)
+        return res[0].get('id')
+    return None
+
+
+def enroll_user_to_course(userid, courseid):
+    try:
+        call('enrol_manual_enrol_users', enrolments=[{'roleid': config.roleid, 'userid': userid, 'courseid': courseid}])
+        user = get_user_by_field('id', userid)
+        logger.info('User %s (%s) enrolled to the course %s', user.get("lastname") + " " + user.get("firstname"),
+                    user.get("username"), get_course_by_field('id', courseid).get("fullname"))
+        return True
+    except Exception as e:
+        logger.error('Error while enrolling user %s to the course: %s', userid, e)
+        return False
+
+
+def get_user_by_field(field, value):
+    user = call('core_user_get_users_by_field', field=field, values=[value])
+    if user and len(user) > 0:
+        return user[0]
+    return None
+
+
+def get_course_by_field(field, value):
+    course = call('core_course_get_courses_by_field', field=field, value=value)['courses']
+    if course and len(course) > 0:
+        return course[0]
+    return None
