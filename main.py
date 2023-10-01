@@ -1,4 +1,3 @@
-# TODO: Все для шаблона (ссылки, тексты, картинки) вынести в конфиг
 import os.path
 from shutil import copy2
 from time import sleep
@@ -209,50 +208,66 @@ def check_new():
     """
     Checks the spreadsheet for new records for registration and registers them
     """
-    sa = gspread.service_account(
-        filename=get_option('google_sheets', 'credentials_path'))
-    sh = sa.open(get_option('google_sheets', 'spreadsheet_name'))
+    try:
+        sa = gspread.service_account(
+            filename=get_option('google_sheets', 'credentials_path'))
+    except Exception as e:
+        logger.error('Something wrong with Google API credentials. Please, renew them (%s)', e)
+        set_option('google_sheets', 'credentials_path', '')
+        setup()
+    else:
+        try:
+            sh = sa.open(get_option('google_sheets', 'spreadsheet_name'))
+        except Exception as e:
+            logger.error('Something wrong with Google Spreadsheet. Please, renew it. (%s)', e)
+            set_option('google_sheets', 'spreadsheet_name', '')
+            setup()
+        else:
+            sheets_data = get_spreadsheet()
 
-    sheets_data = get_spreadsheet()
+            for ws, ws_local in sheets_data:
+                wks = sh.worksheet(ws)  # Open the sheet
 
-    for ws, ws_local in sheets_data:
-        wks = sh.worksheet(ws)  # Open the sheet
+                if not ws_local:  # Skip empty sheets
+                    continue
 
-        if not ws_local:  # Skip empty sheets
-            continue
+                headers = ws_local[0]  # First row is headers
+                if config.col_name_login not in headers:
+                    logger.error("Login column not found in sheet %s", ws)
+                    continue
 
-        headers = ws_local[0]  # First row is headers
-        if config.col_name_login not in headers:
-            logger.error("Login column not found in sheet %s", ws)
-            continue
+                col_index_login = headers.index(config.col_name_login)
+                col_index_confirm = headers.index(config.col_confirm)
 
-        col_index_login = headers.index(config.col_name_login)
-        col_index_confirm = headers.index(config.col_confirm)
-
-        for i, row in enumerate(ws_local[1:], start=2):  # We start from the second row because the first is headers
-            if row[col_index_confirm] == "TRUE" and \
-                    (not row[col_index_login] or 'ERROR' in row[col_index_login]):
-                if all([row[headers.index(config.col_name_fio)],
-                        row[headers.index(config.col_name_course)],
-                        row[headers.index(config.col_name_mail)]]):
-                    try:
-                        wks.update_cell(i, col_index_login + 1,
-                                        student_registration(row[headers.index(config.col_name_fio)],
-                                                             row[headers.index(config.col_name_course)],
-                                                             row[headers.index(config.col_name_mail)]))
-                    except Exception as e:
-                        if "429" in str(e):
-                            logger.error("Google API - Too many requests. Pause for 20 seconds.")
-                            sleep(20)
-                        elif "502" in str(e):
-                            logger.error("Google API - Something went wrong (Bad Gateway). Pause for 30 seconds.")
-                            sleep(30)
-                        else:
-                            logger.error('Error while working with Google Sheets: %s', e)
-                            sleep(20)
-                else:
-                    logger.error("Not all required data has been filled in for row %d in sheet %s", i, ws)
-                    wks.update_cell(i, col_index_login + 1, 'ERROR: Not all required data has been filled in')
+                # We start from the second row because the first is headers
+                for i, row in enumerate(ws_local[1:], start=2):
+                    if row[col_index_confirm] == "TRUE" and \
+                            (not row[col_index_login] or 'ERROR' in row[col_index_login]):
+                        try:
+                            if all([row[headers.index(config.col_name_fio)],
+                                    row[headers.index(config.col_name_course)],
+                                    row[headers.index(config.col_name_mail)]]):
+                                try:
+                                    wks.update_cell(i, col_index_login + 1,
+                                                    student_registration(row[headers.index(config.col_name_fio)],
+                                                                         row[headers.index(config.col_name_course)],
+                                                                         row[headers.index(config.col_name_mail)]))
+                                except Exception as e:
+                                    if "429" in str(e):
+                                        logger.error("Google API - Too many requests. Pause for 20 seconds.")
+                                        sleep(20)
+                                    elif "502" in str(e):
+                                        logger.error("Google API - Something went wrong (Bad Gateway). "
+                                                     "Pause for 30 seconds.")
+                                        sleep(30)
+                            else:
+                                logger.error("Not all required data has been filled in for row %d in sheet %s", i, ws)
+                                wks.update_cell(i, col_index_login + 1,
+                                                'ERROR: Not all required data has been filled in')
+                        except ValueError as e:
+                            missing_field = str(e).split("'")[1]
+                            logger.error("One of the required columns - %s - is missing in sheet %s.",
+                                         missing_field, ws)
 
 
 if __name__ == "__main__":

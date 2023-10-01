@@ -41,8 +41,13 @@ logger.setLevel(logging.INFO)  # Here you can change the logging level
 
 # Settings for logging to file
 # Check if logs folder exists, if not - create it
-if not os.path.exists('logs'):
-    os.makedirs('logs')
+try:
+    if not os.path.exists('logs'):
+        os.makedirs('logs')
+except Exception as e:
+    logger.error('Error while creating logs folder: %s', e)
+
+# Create handler for logging to file
 handler = CustomTimedRotatingFileHandler("logs", backupCount=7)
 handler.setFormatter(formatter)
 logger.addHandler(handler)

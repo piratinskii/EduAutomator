@@ -1,10 +1,47 @@
 import configparser
 import os
 import platform
+from shutil import copy2
+from log_config import logger
+
+
+def renew_config():
+    """
+    Replace config.ini by default_config.ini
+    """
+    try:
+        copy2('default_config.ini', 'config.ini')
+    except Exception as e:
+        logger.ERROR('Error while replacing config.ini by default_config.ini. Please check files', e)
+        exit(1)
 
 
 config = configparser.ConfigParser()
-config.read('config.ini', encoding='utf-8')
+try:
+    config.read('config.ini', encoding='utf-8')
+except Exception as e:
+    logger.ERROR('Error while reading config.ini. File will replaced by default_config.ini: %s', e)
+    renew_config()
+
+
+def delete_env_variable(key):
+    """
+    Delete environment variable for current user.
+    :param key: Key of variable to delete
+    """
+    system_platform = platform.system()
+
+    if system_platform == "Windows":
+        os.system(f'reg delete HKCU\\Environment /F /V {key}')
+    elif system_platform == "Linux" or system_platform == "Darwin":  # Darwin is macOS
+        os.system(f"sed -i '/{key}=/d' ~/.bashrc")
+        os.system(f"sed -i '/{key}=/d' ~/.bash_profile")
+        os.system(f"sed -i '/{key}=/d' ~/.zshrc")
+    else:
+        raise Exception("Unsupported OS")
+
+    # Remove the environment variable from the current session
+    os.environ.pop(key, None)
 
 
 def set_env_variable(key, value):
@@ -47,9 +84,15 @@ def set_option(section, option, new_value):
     :param option: Option of section (url, endpoint etc.)
     :param new_value: New value of option
     """
-    config[section][option] = new_value
-    with open('config.ini', 'w', encoding='utf-8') as configfile:
-        config.write(configfile)
+    config[str(section)][str(option)] = str(new_value)
+    try:
+        with open('config.ini', 'w', encoding='utf-8') as configfile:
+            config.write(configfile)
+    except FileNotFoundError:
+        logger.ERROR('File config.ini not found! It will be created by default_config.ini')
+        renew_config()
+    except Exception as e:
+        logger.ERROR('Error while writing config.ini: %s', e)
 
 
 def get_option(section, option):

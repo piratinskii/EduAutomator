@@ -1,5 +1,4 @@
 import os
-import ssl
 import sys
 from collections import defaultdict
 from email.mime.multipart import MIMEMultipart
@@ -58,8 +57,11 @@ def auth_gmail():
             code = input("Enter the authorization code: ")
             flow.fetch_token(code=code)
             creds = flow.credentials
-            with open('token.json', 'w') as token:
-                token.write(creds.to_json())
+            try:
+                with open('token.json', 'w') as token:
+                    token.write(creds.to_json())
+            except Exception as e:
+                logger.error('Error: can\'t write token to file! %s', e)
         gmail_service = build('gmail', 'v1', credentials=creds)
         return gmail_service
 
@@ -71,42 +73,51 @@ def mailto(**kwargs):
     If you don't provide login - send email to admin (no course)
     :param kwargs: Some variables for template (login, email, password, course_name etc.)
     """
-    try:
-        if kwargs.get('login'):  # Letters for users
-            msg_to = kwargs.get('email')
-            msg_subject = config.mail_subject
-            if not kwargs.get('password'):
-                # Template for existing users
+    if kwargs.get('login'):  # Letters for users
+        msg_to = kwargs.get('email')
+        msg_subject = config.mail_subject
+        if not kwargs.get('password'):
+            # Template for existing users
+            try:
                 with open('letters/enrollment.html', encoding='UTF-8') as f:
                     letter = f.read()
-            else:
-                # Template for new users
+            except FileNotFoundError:
+                logger.error('Error: can\'t find enrollment.html template! Please check it')
+            except Exception as e:
+                logger.error('Error while opening enrollment.html template: %s', e)
+        else:
+            # Template for new users
+            try:
                 with open('letters/registration.html', encoding='UTF-8') as f:
                     letter = f.read()
+            except FileNotFoundError:
+                logger.error('Error: can\'t find registration.html template! Please check it')
+            except Exception as e:
+                logger.error('Error while opening registration.html template: %s', e)
 
-        else:  # Letters for admin
+    else:  # Letters for admin
+        try:
             with open('letters/nocourse.html', encoding='UTF-8') as f:
                 letter = f.read()
-            msg_to = config.admin_email
-            msg_subject = config.mail_subject_nocourse
-        """
-        Because we also have some variables for template not from kwargs we use additional_vars for them
-        If you want to add some variables to template - add them to additional_vars and 
-        to the config.ini file in the [moodle] section, like 'url' option
-        """
-        additional_vars = {
-            'URL': config.get_option('moodle', 'url'),
-        }
-        combined_vars = {**kwargs, **additional_vars}
-        email_content = letter.format_map(defaultdict(str, **combined_vars))
-        message = create_message(msg_to, msg_subject, email_content)
-        send_message(service, 'me', message)
-        logger.info('Message sent to %s', msg_to)
-    except Exception as e:  # If something went wrong-wrong - restart program
-        logger.error('Error while sending mail: %s. Trying again', e)
-        logger.info('Restarting program...')
-        sleep(20)
-        os.execv(sys.executable, ['python'] + sys.argv)  # Restart program
+        except FileNotFoundError:
+            logger.error('Error: can\'t find nocourse.html template! Please check it')
+        except Exception as e:
+            logger.error('Error while opening nocourse.html template: %s', e)
+        msg_to = config.admin_email
+        msg_subject = config.mail_subject_nocourse
+    """
+    Because we also have some variables for template not from kwargs we use additional_vars for them
+    If you want to add some variables to template - add them to additional_vars and 
+    to the config.ini file in the [moodle] section, like 'url' option
+    """
+    additional_vars = {
+        'URL': config.get_option('moodle', 'url'),
+    }
+    combined_vars = {**kwargs, **additional_vars}
+    email_content = letter.format_map(defaultdict(str, **combined_vars))
+    message = create_message(msg_to, msg_subject, email_content)
+    send_message(service, 'me', message)
+    logger.info('Message sent to %s', msg_to)
 
 
 def create_message(to, subject, message_text):

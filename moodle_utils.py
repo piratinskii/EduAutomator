@@ -1,3 +1,5 @@
+import os
+
 import config
 from requests import post
 from log_config import logger
@@ -40,16 +42,23 @@ def call(fname, **kwargs):
     :return: response from Moodle API
     """
     response = None
+    parameters = rest_api_parameters(kwargs)
+    parameters.update({"wstoken": config.KEY, 'moodlewsrestformat': 'json', "wsfunction": fname})
     try:
-        parameters = rest_api_parameters(kwargs)
-        parameters.update({"wstoken": config.KEY, 'moodlewsrestformat': 'json', "wsfunction": fname})
         response = post(config.URL + config.ENDPOINT, parameters)
-        response = response.json()
-        if type(response) == dict and response.get('exception'):
-            raise SystemError("Error calling Moodle API\n", response)
     except Exception as e:
-        logger.error('Error while calling Moodle API: %s', e)
-    return response
+        logger.error("Error calling Moodle API\n", e)
+    response = response.json()
+    if response:
+        if 'exception' in response:
+            if 'errorcode' in response and response['errorcode'] == 'invalidtoken':
+                logger.error("Invalid Moodle API token. Please renew it.")
+                config.delete_env_variable('EDU_AUTOMATOR_MOODLE_API_KEY')
+                config.KEY = config.check_env()
+            else:
+                logger.error("Moodle exception: %s", response)
+        else:
+            return response
 
 
 def create_course(name):
@@ -63,7 +72,11 @@ def create_course(name):
         'shortname': name,
         'categoryid': config.get_option('moodle', 'category_id'),
     }
-    res = call('core_course_create_courses', courses=[course_data])
+    res = None
+    try:
+        res = call('core_course_create_courses', courses=[course_data])
+    except Exception as e:
+        logger.error("Error creating course: %s", e)
     if isinstance(res, list) and len(res) > 0:
         logger.info('Course %s created', name)
         return res[0].get('id')
@@ -89,7 +102,11 @@ def create_user(firstname, lastname, email, username, password):
         'auth': 'manual',
         'preferences': [{'type': 'auth_forcepasswordchange', 'value': config.force_password}]
     }
-    res = call('core_user_create_users', users=[user_data])
+    res = None
+    try:
+        res = call('core_user_create_users', users=[user_data])
+    except Exception as e:
+        logger.error("Error creating user: %s", e)
     if isinstance(res, list) and len(res) > 0:
         logger.info('User %s (%s) created', lastname + " " + firstname, username)
         return res[0].get('id')
@@ -103,14 +120,14 @@ def enroll_user_to_course(userid, courseid):
     :param courseid: ID of the course to enroll to
     :return: True if user was enrolled, False otherwise
     """
+    user = get_user_by_field('id', userid)
     try:
         call('enrol_manual_enrol_users', enrolments=[{'roleid': config.roleid, 'userid': userid, 'courseid': courseid}])
-        user = get_user_by_field('id', userid)
         logger.info('User %s (%s) enrolled to the course %s', user.get("lastname") + " " + user.get("firstname"),
                     user.get("username"), get_course_by_field('id', courseid).get("fullname"))
         return True
     except Exception as e:
-        logger.error('Error while enrolling user %s to the course: %s', userid, e)
+        logger.error('Error while enrolling user %s to the course: %s', user.get("username"), e)
         return False
 
 
