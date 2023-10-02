@@ -13,6 +13,7 @@
 - You must have a Google Cloud account (for working with Google Sheets)
 - You must have your own Moodle server (for working with Moodle API)
 - You must have a Gmail account (for sending emails)
+- Python 3.11 and PIP
 
 ## Preparation
 1. Google Cloud project's settings
@@ -80,7 +81,8 @@
 6. Edu Automator.
    - Now you have all the necessary data to configure the Edu Automator. In first time program will install all necessary packages from "requirements.txt". After that you can start the program.
    - You can start the program with the following command:
-     - `python main.py`
+     - `sudo py main.py` for Linux
+     - 'python main.py' for Windows (please, run command line as Administrator) 
    - Complete all configure questions of the program. It's required process.
    - Also you should change templates in the "letters" folder. There is 3 templates:
      - "registration.html" - for registration email letter to the new student
