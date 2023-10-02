@@ -14,7 +14,7 @@ try:
     from registration_utils import generate_unique_login, generate_password, validate_name
 except ImportError:
     required_packages = {
-        d.name for d in pkg_resources.working_set
+        d.key for d in pkg_resources.working_set
     }
 
     with open("requirements.txt", "r", encoding="utf-16") as f:
