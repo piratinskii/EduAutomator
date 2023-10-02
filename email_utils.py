@@ -1,9 +1,7 @@
 import os
-import sys
 from collections import defaultdict
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from time import sleep
 import qrcode
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
@@ -97,7 +95,7 @@ def mailto(**kwargs):
 
     else:  # Letters for admin
         try:
-            with open('letters/nocourse.html', encoding='UTF-8') as f:
+            with open('letters/system.html', encoding='UTF-8') as f:
                 letter = f.read()
         except FileNotFoundError:
             logger.error('Error: can\'t find nocourse.html template! Please check it')

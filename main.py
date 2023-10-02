@@ -1,14 +1,27 @@
-import os.path
-from shutil import copy2
-from time import sleep
-import gspread
-from email_validator import validate_email, EmailNotValidError
-import config
-from email_utils import mailto
-from log_config import logger
-from config import set_option, get_option, check_env
-from moodle_utils import create_user, create_course, get_user_by_field, enroll_user_to_course, get_course_by_field
-from registration_utils import generate_unique_login, generate_password, validate_name
+import subprocess
+import pkg_resources
+try:
+    import os.path
+    from shutil import copy2
+    from time import sleep
+    import gspread
+    from email_validator import validate_email, EmailNotValidError
+    import config
+    from email_utils import mailto
+    from log_config import logger
+    from config import set_option, get_option, check_env
+    from moodle_utils import create_user, create_course, get_user_by_field, enroll_user_to_course, get_course_by_field
+    from registration_utils import generate_unique_login, generate_password, validate_name
+except ImportError:
+    required_packages = {
+        d.name for d in pkg_resources.working_set
+    }
+
+    with open("requirements.txt", "r") as f:
+        for line in f:
+            package_name = line.strip().split("==")[0]
+            if package_name not in required_packages:
+                subprocess.check_call(["pip", "install", package_name])
 
 
 def get_spreadsheet():
