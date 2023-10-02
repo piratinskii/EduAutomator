@@ -12,6 +12,8 @@ with open("requirements.txt", "r") as f:
     for line in f:
         package_name = line.strip().split("==")[0]
         if package_name not in required_packages:
+            print(f"Trying to install: {package_name}")
             subprocess.check_call(["pip", "install", package_name])
+
 
 subprocess.Popen(["python", "main.py"])
