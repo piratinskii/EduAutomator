@@ -8,7 +8,7 @@ required_packages = {
     d.key for d in pkg_resources.working_set
 }
 
-with open("requirements.txt", "r") as f:
+with open("requirements.txt", "r", encoding="utf-8-sig") as f:
     for line in f:
         package_name = line.strip().split("==")[0]
         if package_name not in required_packages:
