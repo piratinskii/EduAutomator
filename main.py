@@ -1,7 +1,10 @@
 import subprocess
 import pkg_resources
+# Here we import all required packages. If some package is not installed - install it and restart the script.
 try:
     import os.path
+    import os
+    import sys
     from shutil import copy2
     from time import sleep
     import gspread
@@ -13,6 +16,7 @@ try:
     from moodle_utils import create_user, create_course, get_user_by_field, enroll_user_to_course, get_course_by_field
     from registration_utils import generate_unique_login, generate_password, validate_name
 except ImportError:
+    # Not all required packages are installed. Install them and restart the script.
     required_packages = {
         d.key for d in pkg_resources.working_set
     }
@@ -22,6 +26,8 @@ except ImportError:
             package_name = line.strip().split("==")[0]
             if package_name not in required_packages:
                 subprocess.check_call(["pip", "install", package_name])
+    # Restart the script
+    os.execv(sys.executable, ['python'] + sys.argv)
 
 
 def get_spreadsheet():
